@@ -3,6 +3,7 @@ import React, { useState } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import Signin from "@/components/signin";
 
 const Login = () => {
   const router = useRouter()
@@ -88,19 +89,17 @@ const Login = () => {
             </div>
 
             <button className="text-sm text-blue-600 hover:underline">Forgot your password?</button>
-            <button className="mt-6 bg-blue-500 text-white p-2 px-5 rounded-lg duration-150">Create a new account</button>
 
-            <div className="w-full mt-3">
-              <button
-                type="button"
-                className="signup-google w-full px-4 py-2 flex gap-2 items-center justify-center rounded-lg duration-150"
-              >
-                <img className="w-6 h-6" src="https://www.svgrepo.com/show/475656/google-color.svg" alt="google logo" loading="lazy" />
-                <span>Sign in with Google</span>
-              </button>
+            {/* নতুন একাউন্ট বাটন /signup রিডাইরেক্ট */}
+            <Link href="/signup" className="mt-6 bg-blue-500 text-white p-2 px-5 rounded-lg duration-150 text-center block">
+              Create a new account
+            </Link>
+
+            {/* Google Signin */}
+            <div className="mt-4 flex justify-center">
+              <Signin />
             </div>
 
-            
           </form>
         </div>
       </div>
@@ -109,4 +108,3 @@ const Login = () => {
 }
 
 export default Login
-

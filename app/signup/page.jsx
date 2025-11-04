@@ -13,8 +13,8 @@ export default function SignUp() {
   const [step, setStep] = useState(1);
   const [userData, setUserData] = useState({});
   const [userId, setUserId] = useState("");
-  const [googleData, setGoogleData] = useState(null); // ✅ Google profile
-  const [tmpId, setTmpId] = useState(null); // tmpId + key
+  const [pending, setPending] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   const { register, handleSubmit, watch, reset, setError, formState: { errors } } = useForm();
   const contactValue = watch("contact", "");
@@ -25,66 +25,40 @@ export default function SignUp() {
     setInputType(onlyNumbers ? "number" : "email");
   }, [contactValue]);
 
-  // ✅ Handle Google redirect
+  // Check pending signup
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get("code");
-    const tmpKey = urlParams.get("tmpKey");
-    if (code && tmpKey) {
-      fetch(`/api/auth/google?code=${code}&tmpKey=${tmpKey}`)
-        .then(res => res.json())
-        .then(async data => {
-          if (data.FirstName) {
-            // নতুন ইউজার → Step 2
-            setGoogleData(data);
-            setTmpId(data.tmpId); // store tmpId
-            setStep(2);
-          } else if (data.userExists) {
-            // ইউজার আছে → সেশন তৈরি এবং লগিন
-            const loginRes = await fetch("/api/auth/login-google", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ Email: data.Email }),
-            });
-            if (loginRes.ok) router.push("/home");
-          }
-        })
-        .catch(err => console.log(err));
-    }
-  }, [router]);
+    const checkPending = async () => {
+      try {
+        const res = await fetch("/api/auth/google/users", { cache: "no-store" });
+        const data = await res.json();
+        if (res.ok && data._id && data.key) {
+          setPending(data);
+          setStep(2); // Skip step 1
+          setUserData({
+            FirstName: data.FirstName,
+            LastName: data.LastName,
+            Email: data.Email,
+            Phone: data.Phone,
+            key: data.key,
+            tempId: data._id
+          });
+        } else {
+          setPending(null);
+        }
+      } catch {
+        setPending(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    checkPending();
+  }, []);
 
   const onSubmit = async (data) => {
-    // ✅ Google signup path
-    if (googleData && step === 2) {
-      const finalData = {
-        ...googleData,
-        UserName: data.UserName,
-        DateOfBirth: data.DateOfBirth,
-        tmpId // include tmpId
-      };
+    setMessage("");
 
-      try {
-        const res = await fetch("/api/auth/signup-google", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(finalData),
-        });
-
-        const resData = await res.json();
-        if (res.status === 201) {
-          router.push("/home"); // auto logged in
-        } else {
-          setMessage(resData.error || "Something went wrong");
-        }
-      } catch (err) {
-        console.log(err);
-        setMessage("Server error");
-      }
-      return;
-    }
-
-    // ✅ Normal signup path
     if (step === 1) {
+      // New user Step 1
       setUserData({
         FirstName: data.FirstName,
         LastName: data.LastName,
@@ -95,41 +69,53 @@ export default function SignUp() {
       reset();
       setStep(2);
     } else if (step === 2) {
-      const newUserData = {
-        FirstName: userData.FirstName,
-        LastName: userData.LastName,
-        UserName: data.UserName,
-        DateOfBirth: data.DateOfBirth,
-        Email: userData.Email,
-        Phone: userData.Phone,
-        Password: userData.Password,
-      };
+      // Step 2: Username + DOB
+      const payload = pending
+        ? {
+            tempId: pending._id,
+            key: pending.key,
+            username: data.UserName,
+            dateOfBirth: data.DateOfBirth,
+            deviceName: "web",
+          }
+        : {
+            FirstName: userData.FirstName,
+            LastName: userData.LastName,
+            UserName: data.UserName,
+            DateOfBirth: data.DateOfBirth,
+            Email: userData.Email || "",
+            Phone: userData.Phone || "",
+            Password: userData.Password || "",
+            deviceName: "web",
+          };
 
       try {
-        const res = await fetch("/api/auth/signup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(newUserData)
-        });
-
+        const res = await fetch(
+          pending ? "/api/auth/google/users" : "/api/auth/signup",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          }
+        );
         const resData = await res.json();
 
-        if (res.status === 201) {
-          setMessage("OTP sent! Enter it below");
-          setUserId(resData.userId);
+        if (res.ok) {
+          setMessage("Signup complete! Redirecting...");
           reset();
-          setStep(3);
-          setUserData(newUserData);
+          setTimeout(() => router.push("/home"), 800);
         } else {
+          // Handle errors
           if (resData.error === "Duplicate UserName") setError("UserName", { type: "manual", message: "Username already in use" });
           else if (resData.error === "Duplicate Email" || resData.error === "Duplicate Phone") setError("contact", { type: "manual", message: `${resData.error.replace("Duplicate ", "")} already in use` });
-          else setMessage(resData.error || "Something went wrong");
+          else setMessage(resData.error || `Error ${res.status}`);
         }
       } catch (err) {
         console.log(err);
         setMessage("Server error");
       }
     } else if (step === 3) {
+      // OTP verification
       const otpValue = data.otp;
       try {
         const res = await fetch("/api/otp/verify", {
@@ -140,7 +126,7 @@ export default function SignUp() {
 
         const resData = await res.json();
 
-        if (res.status === 200) {
+        if (res.ok) {
           router.push("/login");
         } else {
           setMessage(resData.error || "Invalid OTP");
@@ -152,6 +138,8 @@ export default function SignUp() {
     }
   };
 
+  if (loading) return <div className="p-6">Loading...</div>;
+
   return (
     <div className="flex flex-col lg:flex-row h-screen overflow-hidden bg-gray-50">
       {/* Left */}
@@ -160,14 +148,17 @@ export default function SignUp() {
         <Image src="/text.sw.svg" alt="Start Work BD" width={200} height={200} className="hidden md:block lg:hidden mb-4" />
         <Image src="/logo.sw.svg" alt="logo" width={100} height={100} className="block md:hidden mb-3" />
         <h1 className="text-xl md:text-2xl font-bold text-center">Create Your Account</h1>
-        <p className="hidden lg:block text-gray-700 mt-2 text-center">Join Start Work BD and start your professional journey</p>
+        <p className="hidden lg:block text-gray-700 mt-2 text-center">
+          Join Start Work BD and start your professional journey
+        </p>
       </div>
 
       {/* Right */}
       <div className="flex items-start lg:items-center justify-center h-[70%] lg:h-full lg:w-1/2">
         <div className="w-[95%] xs:w-[90%] sm:w-[85%] md:w-[70%] lg:w-96 p-6 rounded-none lg:rounded-xl bg-white lg:shadow-md lg:border lg:border-gray-300 overflow-hidden">
           <form className="flex flex-col gap-3" onSubmit={handleSubmit(onSubmit)}>
-            {step === 1 && !googleData && (
+            {/* Step 1: New user */}
+            {!pending && step === 1 && (
               <>
                 <div className="flex flex-col sm:flex-row gap-3 w-full">
                   <div className="w-full sm:w-[50%]">
@@ -188,10 +179,14 @@ export default function SignUp() {
 
                 <button type="submit" className="submit my-2 bg-blue-500 text-white p-2 px-5 rounded-lg duration-150">Next</button>
 
-                <Signin /> {/* Google sign-in button */}
+                {/* Google Signin */}
+                <div className="mt-4 flex justify-center">
+                  <Signin />
+                </div>
               </>
             )}
 
+            {/* Step 2: Username + DOB */}
             {step === 2 && (
               <>
                 <input className="signup-input" type="text" placeholder="Username" {...register("UserName", { required: true })} />
@@ -204,7 +199,8 @@ export default function SignUp() {
               </>
             )}
 
-            {step === 3 && !googleData && (
+            {/* Step 3: OTP */}
+            {step === 3 && (
               <>
                 <input className="signup-input" type="text" placeholder="Enter OTP" maxLength={8} {...register("otp", { required: true })} />
                 {errors.otp && <p className="text-red-500 text-sm">{errors.otp.message}</p>}
@@ -216,9 +212,12 @@ export default function SignUp() {
 
           {message && <p className="mt-3 text-red-500 text-sm">{message}</p>}
 
-          {step === 1 && !googleData && (
+          {step === 1 && !pending && (
             <p className="text-sm text-gray-700 mt-2 text-center">
-              Already have an account? <Link href="/login" className="text-blue-600 hover:underline cursor-pointer">Login</Link>
+              Already have an account?{" "}
+              <Link href="/login" className="text-blue-600 hover:underline cursor-pointer">
+                Login
+              </Link>
             </p>
           )}
         </div>
